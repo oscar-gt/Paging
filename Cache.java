@@ -218,7 +218,7 @@ public class Cache {
     	int victim = -1;
     	// First look for case: 
     	// ( ref = 0, dirty = 0 )
-    	victim = findCase(0, 0);
+    	victim = findCase(false, false);
     	if(victim > -1)
     	{
     		return victim;
@@ -233,7 +233,7 @@ public class Cache {
     	// At this point, need to 
     	// look for case:
     	// ( ref = 0, dirty = 1 )
-    	victim = findCase(0, 1);
+    	victim = findCase(false, true);
     	if(victim > -1)
     	{
     		return victim;
@@ -247,7 +247,7 @@ public class Cache {
     	// At this point, need to 
     	// look for case:
     	// ( ref = 1, dirty = 0 )
-    	victim = findCase(1, 0);
+    	victim = findCase(true, false);
     	if(victim > -1)
     	{
     		return victim;
@@ -261,7 +261,7 @@ public class Cache {
     	// At this point, need to 
     	// look for case:
     	// ( ref = 1, dirty = 1 )
-    	victim = findCase(1, 1);
+    	victim = findCase(true, true);
     	if(victim > -1)
     	{
     		return victim;
@@ -282,14 +282,44 @@ public class Cache {
      *   combination to replace. This method will 
      *   change the reference bit 
      */
-    private int findCase(int ref, int dirty)
+    private int findCase(boolean ref, boolean dirty)
     {
-    	int resultIndex = -1;
-    	// Fill in !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    	// ...
+    	// First incrementing clock ptr to check at next entry
+    	incrClockPtr();
+    	int start = getClockPtr();			// Begin iterations here
+    	int end = start + getTableSize();	// End iterations here
+    	int currentindex = 0;				// Current entry to check
+    	boolean currentRef = false;			// Current refBit of current entry
+    	boolean currentDirty = false;		// Current dirtyBit of current entry
     	
-    	return resultIndex;
-    }
+    	// Iterating over pageTable[currentIndex]
+    	// Note: this should also CLEAR the refBit, 
+    	// i.e., it should be set to false or 0.
+    	for(int i = start; i < end; i++)
+    	{
+    		currentindex = i % getTableSize();
+    		// Retrieving reference and dirty bitss
+    		currentRef = pageTable[currentindex].getRefBit();
+    		currentDirty = pageTable[currentindex].getDirtyBit();
+    		if( (currentRef == ref) && (currentDirty == dirty) )
+    		{
+    			// Case found!!!!!
+    			return currentindex;
+    		}
+    		// If case not found in current iteration, 
+    		// clear reference bit (it may or may not 
+    		// be cleared already...). 
+    		pageTable[currentindex].clearRefBit();
+    		// Incrementing clock pointer
+    		incrClockPtr();
+    		
+    	}
+    	
+    	//  At this point, no cases matching
+    	//  (ref, dirty) were found...
+    	return -1;
+    }	// End of findCase( ref, dirty )
+    
     
     private int getClockPtr()
     {
