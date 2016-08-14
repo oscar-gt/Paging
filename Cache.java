@@ -6,6 +6,10 @@
  *  
  *  We will implement an enhanced second chance caching
  *  algorithm. 
+ *  
+ *  NOTE:	In general, I prefer readability over 
+ *  		compactness, so there may be more
+ * 			lines of code than necessary. 			
  * 
  */
 
@@ -109,6 +113,11 @@ public class Cache {
     		this.cacheBlock = new byte[size];
     	}
     	
+    	// Invalidating entry
+    	public void invalidate()
+    	{
+    		this.blockFrameNumber = -1;
+    	}
     	// -------- Setting and clearing reference and dirty bits --------
     	
     	public void setRefBit()
@@ -195,6 +204,8 @@ public class Cache {
     	for(int i = startHere; i < endHere; i++)
     	{
     		int index = i % getTableSize();
+    		// Retrieving and checking
+    		// block frame number. 
     		if(pageTable[index].getBFN() == -1)
     		{
     			// We've found block that's not being used!
@@ -205,7 +216,7 @@ public class Cache {
     	}
     	// At this point, all pages being used, 
     	// need to run enhanced 2nd chance alg. 
-    	return nextVictim();
+    	return -1;
     }
     
     // ---------------------- nextVictom() ----------------------
@@ -213,10 +224,13 @@ public class Cache {
     /*
      *  Next victim found by using 
      *  enhanced 2nd chance algorithm.
+     *  Cases are looked for in decreasing
+     *  replacement priority
      */
     private int nextVictim() {
     	int victim = -1;
-    	// First look for case: 
+    	// First look for case of highest priority
+    	// to replace: 
     	// ( ref = 0, dirty = 0 )
     	victim = findCase(false, false);
     	if(victim > -1)
@@ -279,8 +293,8 @@ public class Cache {
     /*
      *  Helps nextVictim() by looking at combinations of 
      *  (refBit, dirtyBit) and returning the best
-     *   combination to replace. This method will 
-     *   change the reference bit 
+     *  combination to replace. This method will 
+     *  change the reference bit.
      */
     private int findCase(boolean ref, boolean dirty)
     {
@@ -331,22 +345,244 @@ public class Cache {
     	clockPtr = (clockPtr + 1) % getTableSize();
     }
 
+    // ------------------------- writeBack( victimEntry ) -------------------------
+    /*
+     *  Victim to be replaced is written back to the 
+     *  disk so that the cache page can be written 
+     *  with new data. 
+     */
     private void writeBack(int victimEntry) {
+    	// First validating argument
+    	if(victimEntry < 0 || victimEntry >= getTableSize() )
+    	{
+    		throw new IllegalArgumentException("Error in writeBack(victimEnt): argument must be a valid array index.");
+    	}
+    	
+    	// Getting physical  block frame number
+    	int physFrame = pageTable[victimEntry].getBFN(); 
+    	// Writing byte data in victimEntry to physFrame
+    	SysLib.rawwrite(physFrame, pageTable[victimEntry].cacheBlock);
     	
     }
 
+    // --------------------- read( blockId, buffer[] ) -------------------------
+    /*
+     *  Takes data from cache block associated with blockId
+     *  and copies it to buffer[]. If blockId is not found
+     *  in cache, reads from disk. Must then place this data
+     *  in the cache, so it will look for an open spot or
+     *  a victim to replace. 
+     */
     public synchronized boolean read(int blockId, byte buffer[]) {
-        return false;
+    	// First incrementing clock pointer
+    	int tableLength = this.getTableSize();
+    	this.incrClockPtr();
+    	int start = getClockPtr();			// Begin iterations here
+    	int end = start + tableLength;		// End iterations here
+    	int currentIndex = 0;				// Current entry to check
+    	int currBlkId = -1;
+    	for(int i = start; i < end; i++)
+    	{
+    		currentIndex = i % tableLength;
+    		// Retrieving current block frame number in entry
+    		currBlkId = pageTable[currentIndex].getBFN();
+    		if(currBlkId == blockId)
+    		{
+    			// Block found!!!
+    			// Copying data in cache block into buffer[]
+    			System.arraycopy(pageTable[currentIndex].cacheBlock, 0, buffer, 0, buffer.length);
+    			
+    			// Since we just used this entry, we 
+    			// need to set its referenceBit
+    			this.pageTable[currentIndex].setRefBit();
+    			
+    			return true;
+    		}
+    		this.incrClockPtr();
+    	}
+    	
+    	// At this point, blockId not found in
+    	// cache entry. Need to find a slot in 
+    	// the cache to place disk block and then 
+    	// write to it. 
+    	int cachePageToFill = this.findFreePage();
+    	if(cachePageToFill == -1)
+    	{
+    		cachePageToFill = this.nextVictim();
+    	}
+    	
+    	if(cachePageToFill == -1)
+    	{
+    		SysLib.cerr("Error in Cache.read(int blkId, byte buffer[]). No victim found.");
+    		return false;
+    	}
+    	
+    	// Need to write to disk if the entry has the 
+    	// dirty bit set. 
+    	if(pageTable[cachePageToFill].getDirtyBit() == true)
+    	{
+    		// Write entry that will be replaced back 
+    		// to the disk 
+    		int blkFrNum = pageTable[cachePageToFill].getBFN();
+    		SysLib.rawwrite(blkFrNum, pageTable[cachePageToFill].cacheBlock);
+    		// Clearing dirty bit. 
+    		pageTable[cachePageToFill].clearDirtyBit();
+    	}
+    	
+    	// Reading from disk into cache slot
+    	boolean readSuccess = false;
+    	int bytesRead = SysLib.rawread(blockId, buffer);
+    	if(bytesRead > 0)
+    	{
+    		readSuccess = true;
+    		// Placing data into cache
+    		System.arraycopy(buffer, 0, pageTable[cachePageToFill], 0, buffer.length);
+    		// Setting reference bit
+    		pageTable[cachePageToFill].setRefBit();
+    	}
+    	else
+    	{
+    		if(verbose)
+    		{
+    			SysLib.cerr("Error in Cache.read(blockId, buffer): no bytes read.");
+    			readSuccess = false;
+    		}
+    	}
+    	return readSuccess;
     }
 
+    // --------------------------- write() ---------------------------
+    /*
+     *  Writes the buffer[] contents into the cache. First look for 
+     *  a cache entry that's associated with blockFrameNumber == blockId, 
+     *  then write to it. If no cache page has an entry with blockId, 
+     *  find an empty slot in cache or find a victim.
+     *  NOTE:	NO WRITE-THROUGH. I.E., DON'T NEED TO WRITE TO 
+     *  		DISK, ONLY CACHE.
+     */
     public synchronized boolean write(int blockId, byte buffer[]) {
-        return false;
+    	// Validating arguments
+    	if(blockId < 0)
+    	{
+    		throw new IllegalArgumentException("Error in" 
+    			+ "Cache.write(int blockid, buffer[]). blockId must be >= 0.");
+    	}
+    	
+    	if(buffer.length != pageTable[0].getBlockSize())
+    	{
+    		throw new IllegalArgumentException("Error in" 
+        			+ "Cache.write(int blockid, buffer[]). buffer length invalid");
+    	}
+
+    	// First need to find cache entry with a 
+    	// blockFrameNumber == blockId
+    	int tableLength = this.getTableSize();
+    	this.incrClockPtr();
+    	int start = getClockPtr();			// Begin iterations here
+    	int end = start + tableLength;		// End iterations here
+    	int currentIndex = 0;				// Current entry to check
+    	int currBlkId = -1;
+    	for(int i = start; i < end; i++)
+    	{
+    		currentIndex = i % tableLength;
+    		// Retrieving current block frame number in entry
+    		currBlkId = pageTable[currentIndex].getBFN();
+    		if(currBlkId == blockId)
+    		{
+    			// Match found!
+    	    	// Write to cache entry, set ref and dirty bits.
+    			System.arraycopy(buffer, 0, pageTable[currentIndex].cacheBlock, 0, buffer.length);
+    			pageTable[currentIndex].setRefBit();
+    			pageTable[currentIndex].setDirtyBit();
+    			
+    			return true;
+    		}
+    		this.incrClockPtr();
+    	}
+
+    	// If no match is found, find an empty 
+    	// slot in cache to write to. 
+    	int emptySlot = this.findFreePage();
+    	if(emptySlot > -1)
+    	{
+    		// Empty slot found!
+    		// Write to slot, set ref
+    		System.arraycopy(buffer, 0, pageTable[emptySlot].cacheBlock, 0, buffer.length);
+    		pageTable[emptySlot].setRefBit();
+    		return true;
+    	}
+    	
+    	// At this point, there's no empty slots in 
+    	// cache, need to find victim
+    	int victim = this.nextVictim();
+    	if(victim == -1)
+    	{
+    		SysLib.cerr("Error in Cache.write(blockId, buffer). No victim found.");
+    		return false;
+    	}
+    	
+    	// Victim found!
+    	// Need to check victim's dirty bit and 
+    	// write to disk if needed. 
+    	if(pageTable[victim].getDirtyBit() == true)
+    	{
+    		int victimBlockFrameNum = pageTable[victim].getBFN();
+    		SysLib.rawwrite(victimBlockFrameNum, pageTable[victim].cacheBlock);
+    	}
+    	
+    	// Finally writing to the cache!
+    	System.arraycopy(buffer, 0, pageTable[victim].cacheBlock, 0, buffer.length);
+    	// Setting reference bit
+    	pageTable[currentIndex].setRefBit();
+    	// Clearing dirty bit since this is a
+    	// different block frame number entry
+		pageTable[currentIndex].clearDirtyBit();
+
+    	// End of method
+        return true;
     }
 
-    public synchronized void sync() {
+    // ------------------- sync() -----------------------
+    
+    /*
+     *  sync() writes back all dirby blocks 
+     *  to Disk. Keeps clean cache entries
+     *  in cache (dirtyBit = false)
+     */
+    public synchronized void sync() 
+    {
+    	int currentBFN = -1; // Current block frame number
+    	for(int i = 0; i < this.getTableSize(); i++)
+    	{
+    		// Checking each entry for a set dirty bit
+    		if(this.pageTable[i].getDirtyBit() == true)
+    		{
+    			currentBFN = this.pageTable[i].getBFN();
+    			SysLib.rawwrite(currentBFN, this.pageTable[i].cacheBlock);
+    			this.pageTable[i].clearDirtyBit();
+    		}
+    	}
     }
 
-    public synchronized void flush() {
+    // ------------------- flush() -------------------------
+    
+    /*
+     *  Invalidates all cache entries. 
+     */
+    public synchronized void flush() 
+    {
+    	try
+    	{
+    		for(int i = 0; i < this.getTableSize(); i++)
+    		{
+    			pageTable[i].invalidate();
+    		}
+    	}
+    	catch (NullPointerException e)
+    	{
+    		SysLib.cerr("Error in flush(). page table contains null element.");
+    	}
+	
     }
     
     // Returns size of page table
