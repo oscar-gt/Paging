@@ -366,7 +366,8 @@ public class Cache {
     	// Getting physical  block frame number
     	int physFrame = pageTable[victimEntry].getBFN(); 
     	// Writing byte data in victimEntry to physFrame
-    	SysLib.rawwrite(physFrame, pageTable[victimEntry].cacheBlock);
+    	Disk.write(physFrame, pageTable[victimEntry].cacheBlock);
+    	//SysLib.rawwrite(physFrame, pageTable[victimEntry].cacheBlock);
     	
     }
 
@@ -429,15 +430,17 @@ public class Cache {
     		// Write entry that will be replaced back 
     		// to the disk 
     		int blkFrNum = pageTable[cachePageToFill].getBFN();
-    		SysLib.rawwrite(blkFrNum, pageTable[cachePageToFill].cacheBlock);
+    		Disk.write(blkFrNum, pageTable[cachePageToFill].cacheBlock);
+    		//SysLib.rawwrite(blkFrNum, pageTable[cachePageToFill].cacheBlock);
     		// Clearing dirty bit. 
     		pageTable[cachePageToFill].clearDirtyBit();
     	}
     	
     	// Reading from disk into cache slot
     	boolean readSuccess = false;
-    	int bytesRead = SysLib.rawread(blockId, buffer);
-    	if(bytesRead > 0)
+    	boolean bytesRead = Disk.read(blockId, buffer);
+    	//int bytesRead = SysLib.rawread(blockId, buffer);
+    	if(bytesRead == true)
     	{
     		readSuccess = true;
     		// Placing data into cache
@@ -468,7 +471,8 @@ public class Cache {
      */
     public synchronized boolean write(int blockId, byte buffer[]) {
     	// Validating arguments
-    	
+    	int foo = Disk.blockSize;
+    	SysLib.cerr("Disk.blockSize == " + foo + "\n");
     	if(blockId < 0)
     	{
     		throw new IllegalArgumentException("Error in" 
@@ -549,7 +553,8 @@ public class Cache {
     	if(pageTable[victim].getDirtyBit() == true)
     	{
     		int victimBlockFrameNum = pageTable[victim].getBFN();
-    		SysLib.rawwrite(victimBlockFrameNum, pageTable[victim].cacheBlock);
+    		Disk.write(victimBlockFrameNum, pageTable[victim].cacheBlock);
+    		//SysLib.rawwrite(victimBlockFrameNum, pageTable[victim].cacheBlock);
     	}
     	
     	// Finally writing to the cache!
@@ -580,7 +585,8 @@ public class Cache {
     		if(this.pageTable[i].getDirtyBit() == true)
     		{
     			currentBFN = this.pageTable[i].getBFN();
-    			SysLib.rawwrite(currentBFN, this.pageTable[i].cacheBlock);
+    			Disk.write(currentBFN, this.pageTable[i].cacheBlock);
+    			//SysLib.rawwrite(currentBFN, this.pageTable[i].cacheBlock);
     			this.pageTable[i].clearDirtyBit();
     		}
     	}
