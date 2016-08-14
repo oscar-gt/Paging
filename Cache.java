@@ -17,7 +17,7 @@ import java.util.*;
 
 public class Cache {
 	
-	private boolean verbose = true;
+	private boolean verbose = false;
 
 	/*
 	 * Constructor with blockSize and cacheBlocks
@@ -41,7 +41,7 @@ public class Cache {
 			// blockFrameNumber = -1
 			// referenceBit = false
 			// dirtyBit = false
-			pageTable[i] = new Entry();
+			pageTable[i] = new Entry(blkSize);
 			pageTable[i].blockSize = blkSize;
 			// Clock first points to first element
 			clockPtr = -1;
@@ -93,9 +93,9 @@ public class Cache {
     	/*
     	 *  Single parameter constructor
     	 */
-    	public Entry(int blockFrameNum)
+    	public Entry(int blockSize)
     	{
-    		this(blockFrameNum, false, false, 0);
+    		this(-1, false, false, blockSize);
     	}
     	
     	/*
@@ -111,6 +111,11 @@ public class Cache {
     		this.spaceRemaining = size;
     		// Array initialized with 0s by default.
     		this.cacheBlock = new byte[size];
+    		for(int i = 0; i < blockSize; i++)
+    		{
+    			cacheBlock[i] = (byte) 0;
+    		}
+    		
     	}
     	
     	// Invalidating entry
@@ -413,7 +418,7 @@ public class Cache {
     	
     	if(cachePageToFill == -1)
     	{
-    		SysLib.cerr("Error in Cache.read(int blkId, byte buffer[]). No victim found.");
+    		SysLib.cerr("Error in Cache.read(int blkId, byte buffer[]). No victim found. \n");
     		return false;
     	}
     	
@@ -444,9 +449,10 @@ public class Cache {
     	{
     		if(verbose)
     		{
-    			SysLib.cerr("Error in Cache.read(blockId, buffer): no bytes read.");
-    			readSuccess = false;
+    			SysLib.cerr("Error in Cache.read(blockId, buffer): no bytes read. \n");
+    			
     		}
+    		readSuccess = false;
     	}
     	return readSuccess;
     }
@@ -462,6 +468,7 @@ public class Cache {
      */
     public synchronized boolean write(int blockId, byte buffer[]) {
     	// Validating arguments
+    	
     	if(blockId < 0)
     	{
     		throw new IllegalArgumentException("Error in" 
@@ -502,12 +509,27 @@ public class Cache {
 
     	// If no match is found, find an empty 
     	// slot in cache to write to. 
+    	
     	int emptySlot = this.findFreePage();
     	if(emptySlot > -1)
     	{
+    		
+    		if(verbose)
+        	{
+        		int bufferLen = buffer.length;
+        		int cacheBlkSize = this.pageTable[emptySlot].getBlockSize();
+        		SysLib.cerr("From write(blockId, buffer). buffer.length == " 
+        					+ bufferLen + ", cache block size == " + cacheBlkSize + "\n");
+        	}
     		// Empty slot found!
     		// Write to slot, set ref
     		System.arraycopy(buffer, 0, pageTable[emptySlot].cacheBlock, 0, buffer.length);
+//    		for(int i = 0; i < this.pageTable[emptySlot].getBlockSize(); i++)
+//    		{
+//    			SysLib.cerr("About to access byte " + i + " in cache entry.. \n");
+//    			byte currCacheByte = this.pageTable[emptySlot].cacheBlock[i];
+//    			this.pageTable[emptySlot].cacheBlock[i] = buffer[i];
+//    		}
     		pageTable[emptySlot].setRefBit();
     		return true;
     	}
@@ -517,7 +539,7 @@ public class Cache {
     	int victim = this.nextVictim();
     	if(victim == -1)
     	{
-    		SysLib.cerr("Error in Cache.write(blockId, buffer). No victim found.");
+    		SysLib.cerr("Error in Cache.write(blockId, buffer). No victim found. \n");
     		return false;
     	}
     	
@@ -580,7 +602,7 @@ public class Cache {
     	}
     	catch (NullPointerException e)
     	{
-    		SysLib.cerr("Error in flush(). page table contains null element.");
+    		SysLib.cerr("Error in flush(). page table contains null element. \n");
     	}
 	
     }
