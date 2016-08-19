@@ -16,8 +16,9 @@
 import java.util.*;
 
 public class Cache {
-	
+	// verbose only used to debug
 	private boolean verbose = false;
+	private int maxIts = 5; // Max iterations for debug output
 
 	/*
 	 * Constructor with blockSize and cacheBlocks
@@ -44,7 +45,7 @@ public class Cache {
 			pageTable[i] = new Entry(blkSize);
 			pageTable[i].blockSize = blkSize;
 			// Clock first points to first element
-			clockPtr = -1;
+			clockPtr = 0;
 		}
 	}
 
@@ -57,7 +58,7 @@ public class Cache {
     	/*
     	 *  Private fields
     	 */
-    	// *Disk* block number of cached data
+    	// Disk block number of cached data
     	private int blockFrameNumber;
     	
     	// Ref bit set to 1 whenever this block is accessed.
@@ -72,9 +73,8 @@ public class Cache {
     	
     	// Size of cache block in bytes
     	private int blockSize;
-    	// Number of free bytes remaining
-    	private int spaceRemaining;
     	
+    	// Byte array storing cache data
     	private byte cacheBlock[];
     	
     	// --------------------------------------------------
@@ -108,14 +108,8 @@ public class Cache {
     		this.referenceBit = refBit;
     		this.dirtyBit = dirtyB;
     		this.blockSize = size;
-    		this.spaceRemaining = size;
     		// Array initialized with 0s by default.
-    		this.cacheBlock = new byte[size];
-    		for(int i = 0; i < blockSize; i++)
-    		{
-    			cacheBlock[i] = (byte) 0;
-    		}
-    		
+    		this.cacheBlock = new byte[size];	
     	}
     	
     	// Invalidating entry
@@ -171,11 +165,6 @@ public class Cache {
     	{
     		return dirtyBit;
     	}
-    	
-    	public int getSpaceRemaining()
-    	{
-    		return spaceRemaining;
-    	}
     }
     
     
@@ -183,10 +172,11 @@ public class Cache {
     
 
     /*
-     * Cache field is an array of entries
+     * Cache fields 
      */
     private Entry[] pageTable = null;
     
+    // clock hand used in 2nd chance alg. 
     private int clockPtr;
     
     
@@ -196,12 +186,11 @@ public class Cache {
     
     /*
      *  Looks for the next free page. If all pages
-     *  are being used, will remove a page using
-     *  the enhanced 2nd chance alg.
+     *  are being used, method that calls 
+     *  findFreePage() will look for a victim
      */
     private int findFreePage() {
-    	// First looking for an empty page
-    	incrClockPtr(); // Moving ahead to check entry
+    	// Starting and ending indexes
     	int startHere = getClockPtr();
     	int endHere = startHere + getTableSize();
     	
@@ -214,10 +203,9 @@ public class Cache {
     		if(pageTable[index].getBFN() == -1)
     		{
     			// We've found block that's not being used!
+    			//incrClockPtr();
     			return index;
     		}
-    		// Incrementing clock pointer
-    		incrClockPtr();
     	}
     	// At this point, all pages being used, 
     	// need to run enhanced 2nd chance alg. 
@@ -240,19 +228,23 @@ public class Cache {
     	victim = findCase(false, false);
     	if(victim > -1)
     	{
+    		if(verbose)
+    		{
+    			SysLib.cerr("Case ref = 0, dirty = 0 FOUND on first scan. ");
+    		}
     		return victim;
     	}
     	
     	if(verbose)
 		{
-			SysLib.cerr("Case ref = 0, dirty = 0 NOT found \n");
+			SysLib.cerr("Case ref = 0, dirty = 0 NOT found after FIRST SCAN \n");
 			
 		}
     	
-    	// At this point, need to 
-    	// look for case:
-    	// ( ref = 0, dirty = 1 )
-    	victim = findCase(false, true);
+    	// Looking again in case all 
+    	// reference bits were cleared
+    	// in the previous search
+    	victim = findCase(false, false);
     	if(victim > -1)
     	{
     		return victim;
@@ -260,13 +252,26 @@ public class Cache {
     	
     	if(verbose)
 		{
-			SysLib.cerr("Case ref = 0, dirty = 1 NOT found \n");
+			SysLib.cerr("Case ref = 0, dirty = 0 NOT found after second scan \n");
 			
 		}
-    	// At this point, need to 
-    	// look for case:
-    	// ( ref = 1, dirty = 0 )
-    	victim = findCase(true, false);
+    	
+    	if(verbose)
+    	{
+    		SysLib.cerr("About to sync() \n");
+    		try									/// FOR DEBUGGING
+			{
+				Thread.sleep(2000);
+			}
+			catch(InterruptedException ex)
+			{
+				Thread.currentThread().interrupt();
+			}									// DEBUG END
+    	}
+    	// At this point, need to sync dirty entries
+    	this.sync();
+    	// looking for victim after sync
+    	victim = findCase(false, false);
     	if(victim > -1)
     	{
     		return victim;
@@ -274,13 +279,22 @@ public class Cache {
     	
     	if(verbose)
 		{
-			SysLib.cerr("Case ref = 1, dirty = 0 NOT found \n");
+    		SysLib.cerr("NO VICTIM FOUND AFTER SYNC() \n");
+    		try									/// FOR DEBUGGING
+			{
+				Thread.sleep(2000);
+			}
+			catch(InterruptedException ex)
+			{
+				Thread.currentThread().interrupt();
+			}									// DEBUG END
+			SysLib.cerr("Case ref = 0, dirty = 0 NOT found after sync \n");
 			
 		}
     	// At this point, need to 
     	// look for case:
     	// ( ref = 1, dirty = 1 )
-    	victim = findCase(true, true);
+    	victim = findCase(false, false);
     	if(victim > -1)
     	{
     		return victim;
@@ -297,14 +311,11 @@ public class Cache {
     
     /*
      *  Helps nextVictim() by looking at combinations of 
-     *  (refBit, dirtyBit) and returning the best
-     *  combination to replace. This method will 
+     *  (refBit, dirtyBit). This method will 
      *  change the reference bit.
      */
     private int findCase(boolean ref, boolean dirty)
     {
-    	// First incrementing clock ptr to check at next entry
-    	incrClockPtr();
     	int start = getClockPtr();			// Begin iterations here
     	int end = start + getTableSize();	// End iterations here
     	int currentindex = 0;				// Current entry to check
@@ -314,6 +325,12 @@ public class Cache {
     	// Iterating over pageTable[currentIndex]
     	// Note: this should also CLEAR the refBit, 
     	// i.e., it should be set to false or 0.
+    	if(verbose)
+    	{
+    		boolean startR = pageTable[start].getRefBit();
+    		boolean startD = pageTable[start].getDirtyBit();
+    		SysLib.cerr("From findCase(0, 0) start = getClockPtr() == " + start + "(rev, dirty)= (" + startR + ", " + startD + ")\n");
+    	}
     	for(int i = start; i < end; i++)
     	{
     		currentindex = i % getTableSize();
@@ -323,6 +340,7 @@ public class Cache {
     		if( (currentRef == ref) && (currentDirty == dirty) )
     		{
     			// Case found!!!!!
+    			incrClockPtr();
     			return currentindex;
     		}
     		// If case not found in current iteration, 
@@ -339,12 +357,15 @@ public class Cache {
     	return -1;
     }	// End of findCase( ref, dirty )
     
-    
+    // Returns current location where
+    // clock points. 
     private int getClockPtr()
     {
     	return clockPtr;
     }
     
+    // Moving the clock pointer
+    // ahead by one. 
     private void incrClockPtr()
     {
     	clockPtr = (clockPtr + 1) % getTableSize();
@@ -362,12 +383,16 @@ public class Cache {
     	{
     		throw new IllegalArgumentException("Error in writeBack(victimEnt): argument must be a valid array index.");
     	}
+    	if(pageTable[victimEntry].getDirtyBit() == false)
+    	{
+    		throw new IllegalArgumentException("Error in writeBack(victimEnt): Entry is not dirty.");
+    	}
     	
     	// Getting physical  block frame number
     	int physFrame = pageTable[victimEntry].getBFN(); 
     	// Writing byte data in victimEntry to physFrame
-    	Disk.write(physFrame, pageTable[victimEntry].cacheBlock);
-    	//SysLib.rawwrite(physFrame, pageTable[victimEntry].cacheBlock);
+    	SysLib.rawwrite(physFrame, pageTable[victimEntry].cacheBlock);
+    	pageTable[victimEntry].clearDirtyBit();
     	
     }
 
@@ -380,9 +405,8 @@ public class Cache {
      *  a victim to replace. 
      */
     public synchronized boolean read(int blockId, byte buffer[]) {
-    	// First incrementing clock pointer
+    	
     	int tableLength = this.getTableSize();
-    	this.incrClockPtr();
     	int start = getClockPtr();			// Begin iterations here
     	int end = start + tableLength;		// End iterations here
     	int currentIndex = 0;				// Current entry to check
@@ -398,13 +422,24 @@ public class Cache {
     			// Copying data in cache block into buffer[]
     			System.arraycopy(pageTable[currentIndex].cacheBlock, 0, buffer, 0, buffer.length);
     			
+    			// verbose block for debugging
+    			if(verbose)
+    			{
+    				SysLib.cerr("From Cache.read(blockId == " + blockId + ", buffer) MATCH FOUND  after copyarray \n");
+    				for(int k = 0; k < maxIts; k++)
+    				{
+    					SysLib.cerr("k == " + k + ", pageTable[" + currentIndex + "].cacheBlock[k] == " 
+    							+ pageTable[currentIndex].cacheBlock[k] + ", buffer[k] == " + buffer[k]  +" \n");
+    				}	
+    			} // End of verbose block 
+    			
     			// Since we just used this entry, we 
     			// need to set its referenceBit
     			this.pageTable[currentIndex].setRefBit();
     			
     			return true;
     		}
-    		this.incrClockPtr();
+    		//this.incrClockPtr();
     	}
     	
     	// At this point, blockId not found in
@@ -412,9 +447,12 @@ public class Cache {
     	// the cache to place disk block and then 
     	// write to it. 
     	int cachePageToFill = this.findFreePage();
+    	boolean needVictim = false;
     	if(cachePageToFill == -1)
     	{
+    		// Finding victim
     		cachePageToFill = this.nextVictim();
+    		needVictim = true;
     	}
     	
     	if(cachePageToFill == -1)
@@ -425,34 +463,55 @@ public class Cache {
     	
     	// Need to write to disk if the entry has the 
     	// dirty bit set. 
-    	if(pageTable[cachePageToFill].getDirtyBit() == true)
+    	if(needVictim && pageTable[cachePageToFill].getDirtyBit() == true)
     	{
     		// Write entry that will be replaced back 
     		// to the disk 
     		int blkFrNum = pageTable[cachePageToFill].getBFN();
-    		Disk.write(blkFrNum, pageTable[cachePageToFill].cacheBlock);
-    		//SysLib.rawwrite(blkFrNum, pageTable[cachePageToFill].cacheBlock);
+    		SysLib.rawwrite(blkFrNum, pageTable[cachePageToFill].cacheBlock);
     		// Clearing dirty bit. 
     		pageTable[cachePageToFill].clearDirtyBit();
     	}
     	
     	// Reading from disk into cache slot
     	boolean readSuccess = false;
-    	boolean bytesRead = Disk.read(blockId, buffer);
-    	//int bytesRead = SysLib.rawread(blockId, buffer);
-    	if(bytesRead == true)
+    	int bytesRead = SysLib.rawread(blockId, buffer);
+    	// rawread returns 0 upon success!!!!!!!!!!!
+    	if(bytesRead == 0)
     	{
     		readSuccess = true;
     		// Placing data into cache
-    		System.arraycopy(buffer, 0, pageTable[cachePageToFill], 0, buffer.length);
+    		System.arraycopy(buffer, 0, pageTable[cachePageToFill].cacheBlock, 0, buffer.length);
+    		
+    		// verbose block for debugging!!
+    		if(verbose)
+			{
+				SysLib.cerr("From Cache.read(blockId == " + blockId + ", buffer) VICTIM FOUND  after copyarray \n");
+				for(int k = 0; k < maxIts; k++)
+				{
+					SysLib.cerr("k == " + k + ", pageTable[" + cachePageToFill + "].cacheBlock[k] == " 
+							+ pageTable[cachePageToFill].cacheBlock[k] + ", buffer[k] == " + buffer[k]  +" \n");
+				}
+			} // End of debugging verbose block
+    		
     		// Setting reference bit
     		pageTable[cachePageToFill].setRefBit();
+    		pageTable[cachePageToFill].clearDirtyBit();
     	}
+    	// Else no bytes read!!
     	else
     	{
     		if(verbose)
     		{
     			SysLib.cerr("Error in Cache.read(blockId, buffer): no bytes read. \n");
+    			try
+    			{
+    				Thread.sleep(1000);
+    			}
+    			catch(InterruptedException ex)
+    			{
+    				Thread.currentThread().interrupt();
+    			}
     			
     		}
     		readSuccess = false;
@@ -471,8 +530,6 @@ public class Cache {
      */
     public synchronized boolean write(int blockId, byte buffer[]) {
     	// Validating arguments
-    	int foo = Disk.blockSize;
-    	SysLib.cerr("Disk.blockSize == " + foo + "\n");
     	if(blockId < 0)
     	{
     		throw new IllegalArgumentException("Error in" 
@@ -488,7 +545,6 @@ public class Cache {
     	// First need to find cache entry with a 
     	// blockFrameNumber == blockId
     	int tableLength = this.getTableSize();
-    	this.incrClockPtr();
     	int start = getClockPtr();			// Begin iterations here
     	int end = start + tableLength;		// End iterations here
     	int currentIndex = 0;				// Current entry to check
@@ -503,12 +559,39 @@ public class Cache {
     			// Match found!
     	    	// Write to cache entry, set ref and dirty bits.
     			System.arraycopy(buffer, 0, pageTable[currentIndex].cacheBlock, 0, buffer.length);
+    			
+    			// verbose block for debugging!!
+    			if(verbose)
+    			{
+    				SysLib.cerr("Inside Cache.write() MATCH FOUND, blockId == " + blockId + " ... after arraycopy(buffer, cacheBlock) \n");
+    				SysLib.cerr("Writing to pageTable[" + currentIndex + "] \n");
+    				for(int k = 0; k < maxIts; k++)
+    				{
+    					SysLib.cerr("k == " + k + ", buffer[k] == " + buffer[k] 
+    							+ ", cacheBlock[k] == " + pageTable[currentIndex].cacheBlock[k] + "\n");
+    				}
+    				
+    	    		try									/// FOR DEBUGGING
+    				{
+    					Thread.sleep(2000);
+    				}
+    				catch(InterruptedException ex)
+    				{
+    					Thread.currentThread().interrupt();
+    				}									// DEBUG END
+    				
+    				
+    				
+
+    			} // End of debugging verbose block
+    			
+    			// Updating bits
     			pageTable[currentIndex].setRefBit();
     			pageTable[currentIndex].setDirtyBit();
     			
     			return true;
     		}
-    		this.incrClockPtr();
+    		
     	}
 
     	// If no match is found, find an empty 
@@ -518,23 +601,34 @@ public class Cache {
     	if(emptySlot > -1)
     	{
     		
-    		if(verbose)
-        	{
-        		int bufferLen = buffer.length;
-        		int cacheBlkSize = this.pageTable[emptySlot].getBlockSize();
-        		SysLib.cerr("From write(blockId, buffer). buffer.length == " 
-        					+ bufferLen + ", cache block size == " + cacheBlkSize + "\n");
-        	}
     		// Empty slot found!
     		// Write to slot, set ref
+    		pageTable[emptySlot].blockFrameNumber = blockId;
     		System.arraycopy(buffer, 0, pageTable[emptySlot].cacheBlock, 0, buffer.length);
-//    		for(int i = 0; i < this.pageTable[emptySlot].getBlockSize(); i++)
-//    		{
-//    			SysLib.cerr("About to access byte " + i + " in cache entry.. \n");
-//    			byte currCacheByte = this.pageTable[emptySlot].cacheBlock[i];
-//    			this.pageTable[emptySlot].cacheBlock[i] = buffer[i];
-//    		}
+    		
+    		// verbose block for debugging
+    		if(verbose)
+			{
+				SysLib.cerr("Inside Cache.write() EMPTY SLOT, blockId == " + blockId + " after arraycopy(buffer, cacheBlock) \n");
+				SysLib.cerr("Writing to pageTable[" + emptySlot + "] \n");
+				for(int k = 0; k < maxIts; k++)
+				{
+					SysLib.cerr("k == " + k + ", buffer[k] == " + buffer[k] 
+							+ ", cacheBlock[k] == " + pageTable[emptySlot].cacheBlock[k] + "\n");
+				}
+				try									/// FOR DEBUGGING
+				{
+					Thread.sleep(2000);
+				}
+				catch(InterruptedException ex)
+				{
+					Thread.currentThread().interrupt();
+				}									// DEBUG END
+			} // End of debugging verbose block 
+
+    		// Updating bits
     		pageTable[emptySlot].setRefBit();
+    		pageTable[emptySlot].setDirtyBit();
     		return true;
     	}
     	
@@ -544,6 +638,14 @@ public class Cache {
     	if(victim == -1)
     	{
     		SysLib.cerr("Error in Cache.write(blockId, buffer). No victim found. \n");
+    		try
+			{
+				Thread.sleep(1000);
+			}
+			catch(InterruptedException ex)
+			{
+				Thread.currentThread().interrupt();
+			}
     		return false;
     	}
     	
@@ -553,17 +655,39 @@ public class Cache {
     	if(pageTable[victim].getDirtyBit() == true)
     	{
     		int victimBlockFrameNum = pageTable[victim].getBFN();
-    		Disk.write(victimBlockFrameNum, pageTable[victim].cacheBlock);
-    		//SysLib.rawwrite(victimBlockFrameNum, pageTable[victim].cacheBlock);
+    		SysLib.rawwrite(victimBlockFrameNum, pageTable[victim].cacheBlock);
     	}
     	
     	// Finally writing to the cache!
+    	pageTable[victim].blockFrameNumber = blockId;
     	System.arraycopy(buffer, 0, pageTable[victim].cacheBlock, 0, buffer.length);
+    	
+    	// verbose block for debugging
+    	if(verbose)
+		{
+			SysLib.cerr("Inside Cache.write() VICTIM FOUND, blockId == " + blockId + " after arraycopy(buffer, cacheBlock) \n");
+			SysLib.cerr("Writing to pageTable[" + victim + "] \n");
+			for(int k = 0; k < maxIts; k++)
+			{
+				SysLib.cerr("k == " + k + ", buffer[k] == " + buffer[k] 
+						+ ", cacheBlock[k] == " + pageTable[victim].cacheBlock[k] + "\n");
+			}
+			try									/// FOR DEBUGGING
+			{
+				Thread.sleep(2000);
+			}
+			catch(InterruptedException ex)
+			{
+				Thread.currentThread().interrupt();
+			}									// DEBUG END
+		} // End of debugging verbose block
+    	
     	// Setting reference bit
-    	pageTable[currentIndex].setRefBit();
-    	// Clearing dirty bit since this is a
-    	// different block frame number entry
-		pageTable[currentIndex].clearDirtyBit();
+    	pageTable[victim].setRefBit();
+    	// This could have different data than 
+    	// what is stored on the disk, so setting
+    	// dirty bit
+		pageTable[victim].setDirtyBit();
 
     	// End of method
         return true;
@@ -585,8 +709,7 @@ public class Cache {
     		if(this.pageTable[i].getDirtyBit() == true)
     		{
     			currentBFN = this.pageTable[i].getBFN();
-    			Disk.write(currentBFN, this.pageTable[i].cacheBlock);
-    			//SysLib.rawwrite(currentBFN, this.pageTable[i].cacheBlock);
+    			SysLib.rawwrite(currentBFN, this.pageTable[i].cacheBlock);
     			this.pageTable[i].clearDirtyBit();
     		}
     	}
